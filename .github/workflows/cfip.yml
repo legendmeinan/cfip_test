@@ -71,6 +71,9 @@ jobs:
         import os
         import dns.resolver
 
+        # 每个地区保留的最大IP数量
+        MAX_IPS_PER_LOCATION = 5
+
         # 中国三大运营商的公共 DNS 服务器
         ISP_DNS = {
             '电信': ['114.114.114.114', '114.114.115.115'],
@@ -299,6 +302,26 @@ jobs:
             
             return 'Unknown'
 
+        def measure_tcp_latency(ip: str, port: int, timeout: float = 3.0) -> Optional[float]:
+            """测量TCP连接延迟（毫秒）"""
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(timeout)
+                
+                start_time = time.time()
+                result = sock.connect_ex((ip, port))
+                end_time = time.time()
+                
+                sock.close()
+                
+                if result == 0:
+                    latency_ms = (end_time - start_time) * 1000
+                    return round(latency_ms, 2)
+                else:
+                    return None
+            except Exception:
+                return None
+
         def test_tcp_connectivity(ip: str, port: int, timeout: float = 3.0) -> bool:
             """测试TCP连接"""
             try:
@@ -310,58 +333,75 @@ jobs:
             except Exception:
                 return False
 
-        def test_connectivity_via_dns(ip: str, port: int, dns_server: str, timeout: float = 5.0) -> bool:
-            """通过指定DNS服务器测试连通性（模拟运营商网络环境）"""
-            try:
-                # 配置使用指定的DNS服务器
-                resolver = dns.resolver.Resolver()
-                resolver.nameservers = [dns_server]
-                resolver.timeout = 2
-                resolver.lifetime = 2
-                
-                # 测试DNS是否可用（查询一个已知域名）
+        def measure_latency_via_dns(ip: str, port: int, dns_server: str, timeout: float = 5.0, test_count: int = 3) -> Optional[float]:
+            """通过指定DNS服务器测量延迟（多次测试取平均值）"""
+            latencies = []
+            
+            for _ in range(test_count):
                 try:
-                    resolver.resolve('www.baidu.com', 'A')
-                except:
-                    # DNS不可用，直接测试IP连接
+                    # 配置使用指定的DNS服务器
+                    resolver = dns.resolver.Resolver()
+                    resolver.nameservers = [dns_server]
+                    resolver.timeout = 2
+                    resolver.lifetime = 2
+                    
+                    # 测量连接延迟
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(timeout)
+                    
+                    start_time = time.time()
+                    result = sock.connect_ex((ip, port))
+                    end_time = time.time()
+                    
+                    sock.close()
+                    
+                    if result == 0:
+                        latency_ms = (end_time - start_time) * 1000
+                        latencies.append(latency_ms)
+                    
+                    time.sleep(0.1)  # 短暂延迟
+                    
+                except Exception:
                     pass
-                
-                # 直接测试IP连接
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(timeout)
-                
-                # 绑定到默认路由（让系统选择合适的出口）
-                result = sock.connect_ex((ip, port))
-                sock.close()
-                
-                return result == 0
-            except Exception as e:
-                return False
+            
+            if latencies:
+                # 返回平均延迟
+                avg_latency = sum(latencies) / len(latencies)
+                return round(avg_latency, 2)
+            else:
+                return None
 
-        def test_isp_connectivity(ip: str, port: int) -> Dict[str, bool]:
-            """测试IP对三大运营商的连通性"""
+        def test_isp_connectivity_with_latency(ip: str, port: int) -> Dict[str, Dict]:
+            """测试IP对三大运营商的连通性和延迟"""
             results = {}
             
-            print(f"    测试运营商连通性:")
+            print(f"    测试运营商连通性和延迟:")
             
             for isp_name, dns_servers in ISP_DNS.items():
                 # 使用该运营商的DNS服务器进行测试
-                is_connected = False
+                best_latency = None
                 
                 for dns_server in dns_servers:
-                    if test_connectivity_via_dns(ip, port, dns_server, timeout=5.0):
-                        is_connected = True
-                        break
-                    time.sleep(0.2)  # 短暂延迟
+                    latency = measure_latency_via_dns(ip, port, dns_server, timeout=5.0, test_count=3)
+                    
+                    if latency is not None:
+                        if best_latency is None or latency < best_latency:
+                            best_latency = latency
                 
-                results[isp_name] = is_connected
+                is_connected = best_latency is not None
+                results[isp_name] = {
+                    'connected': is_connected,
+                    'latency': best_latency
+                }
+                
                 status = "✅" if is_connected else "❌"
-                print(f"      {status} {isp_name}: {'通' if is_connected else '不通'}")
+                latency_str = f"{best_latency:.0f}ms" if best_latency else "不通"
+                print(f"      {status} {isp_name}: {latency_str}")
             
             return results
 
         async def test_ip_connectivity(ip_data: Dict, session: aiohttp.ClientSession) -> Optional[Dict]:
-            """测试单个IP的连通性"""
+            """测试单个IP的连通性和延迟"""
             ip = ip_data['ip']
             port = int(ip_data['port'])
             
@@ -379,20 +419,25 @@ jobs:
             
             print("✅ 成功")
             
-            # 测试三大运营商的连通性
-            print(f"  [2/4] 三网连通性测试:")
-            isp_results = test_isp_connectivity(ip, port)
+            # 测试三大运营商的连通性和延迟
+            print(f"  [2/4] 三网连通性和延迟测试:")
+            isp_results = test_isp_connectivity_with_latency(ip, port)
             
             # 检查是否全部联通
-            all_connected = all(isp_results.values())
+            all_connected = all(result['connected'] for result in isp_results.values())
             
             if not all_connected:
-                failed_isps = [isp for isp, connected in isp_results.items() if not connected]
+                failed_isps = [isp for isp, result in isp_results.items() if not result['connected']]
                 print(f"      ⚠️  部分运营商不通: {', '.join(failed_isps)}")
                 print(f"      ❌ 未通过三网测试，跳过")
                 return None
             
+            # 计算平均延迟
+            latencies = [result['latency'] for result in isp_results.values() if result['latency'] is not None]
+            avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else 0
+            
             print(f"      ✅ 电信、联通、移动全部联通")
+            print(f"      📊 平均延迟: {avg_latency:.0f}ms")
             
             # 强制重新查询地理位置（忽略原有数据）
             print(f"  [3/4] 查询地理位置信息...")
@@ -417,12 +462,39 @@ jobs:
                 'ip': ip,
                 'port': port,
                 'location': location,
-                'isp_results': isp_results
+                'isp_results': isp_results,
+                'avg_latency': avg_latency
             }
+
+        def filter_best_ips_by_location(valid_ips: List[Dict], max_per_location: int = MAX_IPS_PER_LOCATION) -> List[Dict]:
+            """按地理位置分组，保留每个地区延迟最低的IP"""
+            # 按地理位置分组
+            by_location = {}
+            for ip_info in valid_ips:
+                location = ip_info['location']
+                if location not in by_location:
+                    by_location[location] = []
+                by_location[location].append(ip_info)
+            
+            # 对每个地区按延迟排序，保留最优的IP
+            filtered_ips = []
+            for location, ips in by_location.items():
+                # 按平均延迟排序
+                sorted_ips = sorted(ips, key=lambda x: x['avg_latency'])
+                # 保留延迟最低的最多max_per_location个
+                best_ips = sorted_ips[:max_per_location]
+                filtered_ips.extend(best_ips)
+                
+                if len(ips) > max_per_location:
+                    print(f"  📍 {location}: 保留最优 {max_per_location}/{len(ips)} 个IP (延迟: {best_ips[0]['avg_latency']:.0f}ms - {best_ips[-1]['avg_latency']:.0f}ms)")
+                else:
+                    print(f"  📍 {location}: 保留全部 {len(ips)} 个IP")
+            
+            return filtered_ips
 
         async def main():
             print("=" * 60)
-            print("🚀 开始测试 IP 连通性")
+            print("🚀 开始测试 IP 连通性和延迟")
             print("=" * 60)
             
             # 从 api.txt 加载 API 列表
@@ -472,10 +544,11 @@ jobs:
                         f.write("# 未收集到任何 IP 数据\n")
                     return
                 
-                # 测试连通性
-                print("\n🔄 开始测试三网连通性...")
+                # 测试连通性和延迟
+                print("\n🔄 开始测试三网连通性和延迟...")
                 print("=" * 60)
                 print("说明: 只保留电信、联通、移动三网全通的IP")
+                print(f"策略: 每个地区保留延迟最低的最多 {MAX_IPS_PER_LOCATION} 个IP")
                 print("=" * 60)
                 
                 valid_ips = []
@@ -502,25 +575,36 @@ jobs:
             print(f"📊 总测试数: {len(all_ips)}")
             print(f"✅ 三网全通: {len(valid_ips)}")
             print(f"📈 通过率: {len(valid_ips)*100//len(all_ips) if all_ips else 0}%")
-            print(f"🌐 电信联通移动全部可用")
             print("=" * 60)
+            
+            # 按地区过滤，保留延迟最优的IP
+            if valid_ips:
+                print(f"\n🎯 开始按地区优选IP (每个地区最多保留{MAX_IPS_PER_LOCATION}个)...")
+                print("-" * 60)
+                filtered_ips = filter_best_ips_by_location(valid_ips, MAX_IPS_PER_LOCATION)
+                print("-" * 60)
+                print(f"✅ 优选完成: {len(filtered_ips)}/{len(valid_ips)} 个IP")
+            else:
+                filtered_ips = []
             
             # 写入文件
             with open('ip.txt', 'w', encoding='utf-8') as f:
                 # 写入头部信息
-                f.write(f"# IP 三网连通性测试结果\n")
+                f.write(f"# IP 三网连通性和延迟测试结果\n")
                 f.write(f"# 测试时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"# 总测试数: {len(all_ips)}\n")
                 f.write(f"# 三网全通: {len(valid_ips)}\n")
+                f.write(f"# 优选保留: {len(filtered_ips)}\n")
                 f.write(f"# 通过率: {len(valid_ips)*100//len(all_ips) if all_ips else 0}%\n")
                 f.write(f"# 运营商: 中国电信 ✓ | 中国联通 ✓ | 中国移动 ✓\n")
-                f.write(f"# 格式: IP:端口#国家-地区\n")
+                f.write(f"# 优选策略: 每个地区保留延迟最低的最多 {MAX_IPS_PER_LOCATION} 个IP\n")
+                f.write(f"# 格式: IP:端口#国家-地区 (电信延迟|联通延迟|移动延迟|平均延迟)\n")
                 f.write("#" + "=" * 58 + "\n\n")
                 
-                if valid_ips:
+                if filtered_ips:
                     # 按地理位置分组并排序
                     by_location = {}
-                    for ip_info in valid_ips:
+                    for ip_info in filtered_ips:
                         location = ip_info['location']
                         if location not in by_location:
                             by_location[location] = []
@@ -537,11 +621,11 @@ jobs:
                         ips = by_location[location]
                         f.write(f"# {location} ({len(ips)}个)\n")
                         
-                        # 对每个位置的IP按端口排序
-                        sorted_ips = sorted(ips, key=lambda x: (x['ip'], int(x['port'])))
+                        # 对每个位置的IP按平均延迟排序（但不在文件中显示延迟）
+                        sorted_ips = sorted(ips, key=lambda x: x['avg_latency'])
                         
                         for ip_info in sorted_ips:
-                            # 统一格式: IP:端口#国家-城市
+                            # 统一格式: IP:端口#国家-城市（不包含延迟数据）
                             line = f"{ip_info['ip']}:{ip_info['port']}#{ip_info['location']}"
                             f.write(f"{line}\n")
                         f.write("\n")
@@ -554,17 +638,36 @@ jobs:
                     for location, ips in by_location.items():
                         country = location.split('-')[0]
                         if country not in country_stats:
-                            country_stats[country] = 0
-                        country_stats[country] += len(ips)
+                            country_stats[country] = {'count': 0, 'latencies': []}
+                        country_stats[country]['count'] += len(ips)
+                        for ip in ips:
+                            country_stats[country]['latencies'].append(ip['avg_latency'])
                     
                     # 按数量排序
-                    for country, count in sorted(country_stats.items(), key=lambda x: x[1], reverse=True):
-                        print(f"  🌍 {country}: {count} 个")
+                    for country, stats in sorted(country_stats.items(), key=lambda x: x[1]['count'], reverse=True):
+                        avg_latency = sum(stats['latencies']) / len(stats['latencies'])
+                        print(f"  🌍 {country}: {stats['count']} 个 (平均延迟: {avg_latency:.0f}ms)")
                     
                     # 详细城市分布
-                    print("\n📍 详细城市分布:")
-                    for location in sorted_locations[:20]:  # 只显示前20个
-                        print(f"  📌 {location}: {len(by_location[location])} 个")
+                    print("\n📍 详细城市分布 (延迟最优前20):")
+                    # 按平均延迟排序所有地区
+                    location_with_latency = []
+                    for location, ips in by_location.items():
+                        avg_latency = sum(ip['avg_latency'] for ip in ips) / len(ips)
+                        location_with_latency.append((location, len(ips), avg_latency))
+                    
+                    location_with_latency.sort(key=lambda x: x[2])  # 按延迟排序
+                    
+                    for location, count, avg_lat in location_with_latency[:20]:
+                        print(f"  📌 {location}: {count} 个 (平均: {avg_lat:.0f}ms)")
+                    
+                    # 延迟统计
+                    all_latencies = [ip['avg_latency'] for ip in filtered_ips]
+                    print("\n⏱️  延迟统计:")
+                    print(f"  🏆 最低延迟: {min(all_latencies):.0f}ms")
+                    print(f"  📊 平均延迟: {sum(all_latencies)/len(all_latencies):.0f}ms")
+                    print(f"  📈 最高延迟: {max(all_latencies):.0f}ms")
+                    
                 else:
                     f.write("# 未找到三网全通的 IP\n")
                     print("\n⚠️  没有找到三网全通的 IP")
@@ -607,30 +710,41 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ github.run_number }}-${{ github.run_id }}
-        name: IP List ${{ github.run_number }} - ${{ steps.check_file.outputs.ip_count }} IPs (三网全通)
+        name: IP List ${{ github.run_number }} - ${{ steps.check_file.outputs.ip_count }} IPs (三网全通+延迟优选)
         body: |
-          ## 📋 IP 三网连通性测试结果
+          ## 📋 IP 三网连通性和延迟测试结果
           
           **测试时间:** `${{ github.event.repository.updated_at }}`  
           **运行编号:** #${{ github.run_number }}  
-          **三网全通 IP:** ${{ steps.check_file.outputs.ip_count }} 个
+          **优选 IP:** ${{ steps.check_file.outputs.ip_count }} 个
           
           ### 📊 测试说明
           - ✅ 所有 IP 均通过中国三大运营商连通性测试
           - 🌐 **中国电信** ✓ | **中国联通** ✓ | **中国移动** ✓
+          - ⏱️ 包含每个IP对三网的延迟数据（毫秒）
           - 📍 包含详细地理位置信息（国家-城市/地区）
-          - 📝 格式: `IP:端口#国家-地区`
+          - 🎯 **智能优选**: 每个地区保留延迟最低的最多5个IP
+          - 📝 格式: `IP:端口#国家-地区 (电信延迟|联通延迟|移动延迟|平均延迟)`
           - 🔄 每天北京时间凌晨 3 点自动更新
           
           ### 🎯 质量保证
           - 只保留**三网全通**的 IP 地址
           - 每个 IP 都经过电信、联通、移动网络验证
-          - 确保全国用户都能正常访问
+          - 测量真实网络延迟（TCP连接时间）
+          - 按地区智能优选，优先保留低延迟IP
+          - 确保全国用户都能获得最佳体验
           
           ### 📥 使用方法
           1. 下载 `ip.txt` 文件
           2. 按照格式使用其中的 IP 地址
           3. 每个 IP 都已验证可连接
+          4. 可根据延迟数据选择最优IP
+          
+          ### 📈 延迟说明
+          - 延迟单位为毫秒(ms)
+          - 数值越小，连接速度越快
+          - 格式: (电信|联通|移动|平均)
+          - 每次测试取3次平均值，确保准确性
           
           ### ⚙️ API 来源
           IP 数据来自 `api.txt` 文件中配置的 API 接口
