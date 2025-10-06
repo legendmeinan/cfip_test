@@ -9,18 +9,18 @@
 
 # ========== CloudFlare 优选 IP API ==========
 # GitHub 仓库源
-https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/bestproxy.txt
+#https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/bestproxy.txt
 https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/bestcf.txt
-https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html
-https://raw.githubusercontent.com/cmliu/WorkerVless2sub/main/addressesapi.txt
+#https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html
+#https://raw.githubusercontent.com/cmliu/WorkerVless2sub/main/addressesapi.txt
 
 # 第三方 API 服务
 
-https://vps789.com/public/sum/cfIpApi
+#https://vps789.com/public/sum/cfIpApi
 https://addressesapi.090227.xyz/CloudFlareYes
-https://addressesapi.090227.xyz/ip.164746.xyz
+#https://addressesapi.090227.xyz/ip.164746.xyz
 https://ipdb.api.030101.xyz/?type=bestproxy&country=true
-https://vps789.com/openApi/cfIpTop20
+#https://vps789.com/openApi/cfIpTop20
 
 # 盒子库
 https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt
