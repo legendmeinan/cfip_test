@@ -10,27 +10,31 @@
 # ========== CloudFlare 优选 IP API ==========
 # GitHub 仓库源
 #https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/bestproxy.txt
-https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/bestcf.txt
+#https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/bestcf.txt
 #https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html
 #https://raw.githubusercontent.com/cmliu/WorkerVless2sub/main/addressesapi.txt
 
+
+# 自建官方优选
+# 优选IP: https://github.com/legendmeinan/cf_ip_test/releases/latest/download/ip.txt
+# 反代IP: # https://github.com/legendmeinan/cf_ip_test/releases/latest/download/pyip.txt
 # 第三方 API 服务
 
 #https://vps789.com/public/sum/cfIpApi
-https://addressesapi.090227.xyz/CloudFlareYes
+#https://addressesapi.090227.xyz/CloudFlareYes
 #https://addressesapi.090227.xyz/ip.164746.xyz
-https://ipdb.api.030101.xyz/?type=bestproxy&country=true
+#https://ipdb.api.030101.xyz/?type=bestproxy&country=true
 #https://vps789.com/openApi/cfIpTop20
 
 # 盒子库
-https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt
+#https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt
 
 # ========== HTML 页面源（自动提取IP）==========
 
-https://www.wetest.vip/page/cloudflare/address_v4.html
-https://www.wetest.vip/page/cloudflare/colo.html
+#https://www.wetest.vip/page/cloudflare/address_v4.html
+#https://www.wetest.vip/page/cloudflare/colo.html
 https://stock.hostmonit.com/CloudFlareYes
-https://api.uouin.com/cloudflare.html
+#https://api.uouin.com/cloudflare.html
 https://ip.164746.xyz/ipTop10.html
 
 # 需要密钥的 API（已注释，如需使用请替换密钥后取消注释）
