@@ -18,7 +18,7 @@
 # 自建官方优选
 # 优选IP:
 
-https://github.com/legendmeinan/cf_ip_test/releases/latest/download/ip.txt
+#https://github.com/legendmeinan/cf_ip_test/releases/latest/download/ip.txt
 
 # 反代IP: 
 
@@ -33,7 +33,7 @@ https://github.com/legendmeinan/cf_ip_test/releases/latest/download/ip.txt
 #https://vps789.com/openApi/cfIpTop20
 
 # 盒子库
-#https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt
+https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt
 
 # ========== HTML 页面源（自动提取IP）==========
 
