@@ -1,8 +1,8 @@
-name: Test IP Connectivity and Create Release
+name: Test IP Connectivity and Create Release (Improved China Test)
 
 on:
   schedule:
-    - cron: '0 19 * * *'  # 每天北京时间凌晨3点运行 (UTC 19:00 = 北京时间 03:00)
+    - cron: '0 19 * * *'  # 每天北京时间凌晨3点运行
   workflow_dispatch:  # 允许手动触发
   push:
     branches:
@@ -11,9 +11,8 @@ on:
       - '.github/workflows/ip-test.yml'
       - 'api.txt'
 
-# 添加必要的权限
 permissions:
-  contents: write  # 允许创建 Release 和上传文件
+  contents: write
   actions: read
 
 jobs:
@@ -31,7 +30,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install requests aiohttp asyncio dnspython beautifulsoup4 lxml
+        pip install requests aiohttp asyncio beautifulsoup4 lxml
 
     - name: Verify api.txt exists
       run: |
@@ -39,15 +38,12 @@ jobs:
           echo "❌ api.txt 文件不存在，正在创建示例文件..."
           cat > api.txt << 'APIEOF'
         # API 列表配置文件
-        # 每行一个 API 地址，# 开头的行为注释
-        # 
         # CloudFlare IP 优选 API
         https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/bestproxy.txt
         https://raw.githubusercontent.com/ymyuuu/IPDB/refs/heads/main/bestcf.txt
         https://ip.164746.xyz/ipTop10.html
         https://raw.githubusercontent.com/ZhiXuanWang/cf-speed-dns/refs/heads/main/ipTop10.html
         https://vps789.com/public/sum/cfIpApi
-        # https://www.wetest.vip/api/cf2dns/get_cloudflare_ip&type=v4&key=o1zrmHAF
         https://raw.githubusercontent.com/cmliu/WorkerVless2sub/main/addressesapi.txt
         https://addressesapi.090227.xyz/CloudFlareYes
         https://addressesapi.090227.xyz/ip.164746.xyz
@@ -57,9 +53,9 @@ jobs:
         echo "📋 API 列表内容："
         cat api.txt
 
-    - name: Create test script
+    - name: Create improved test script
       run: |
-        cat > test_ip.py << 'EOF'
+        cat > test_ip_improved.py << 'EOF'
         import asyncio
         import aiohttp
         import json
@@ -69,18 +65,12 @@ jobs:
         from typing import List, Dict, Optional, Tuple
         import time
         import os
-        import dns.resolver
         from bs4 import BeautifulSoup
 
-        # 每个地区保留的最大IP数量
-        MAX_IPS_PER_LOCATION = 5
-
-        # 中国三大运营商的公共 DNS 服务器
-        ISP_DNS = {
-            '电信': ['114.114.114.114', '114.114.115.115'],
-            '联通': ['123.123.123.123', '123.125.81.6'],
-            '移动': ['221.179.155.161', '112.4.0.55']
-        }
+        # 配置参数
+        MAX_IPS_PER_LOCATION = 5  # 每个地区保留的最大IP数量
+        TEST_DELAY = 3  # 每个IP测试间隔（秒），避免触发API限制
+        BATCH_SIZE = 3  # 批量测试数量
 
         # 国家代码映射
         COUNTRY_MAPPING = {
@@ -90,15 +80,11 @@ jobs:
             'DE': '德国', 'GB': '英国', 'FR': '法国', 'IT': '意大利', 'ES': '西班牙',
             'PT': '葡萄牙', 'NL': '荷兰', 'BE': '比利时', 'SE': '瑞典', 'NO': '挪威',
             'AU': '澳大利亚', 'NZ': '新西兰', 'BR': '巴西', 'AR': '阿根廷', 'RU': '俄罗斯',
-            'CH': '瑞士', 'AT': '奥地利', 'DK': '丹麦', 'FI': '芬兰', 'IE': '爱尔兰',
-            'PL': '波兰', 'CZ': '捷克', 'TR': '土耳其', 'AE': '阿联酋', 'IL': '以色列',
-            'ZA': '南非', 'EG': '埃及', 'SA': '沙特', 'UA': '乌克兰', 'GR': '希腊'
         }
 
         def load_api_list(filename: str = 'api.txt') -> List[str]:
             """从 api.txt 加载 API 列表"""
             api_urls = []
-            
             if not os.path.exists(filename):
                 print(f"❌ {filename} 文件不存在")
                 return api_urls
@@ -139,32 +125,31 @@ jobs:
         def parse_ip_line(line: str) -> Optional[Dict]:
             """解析IP行，支持多种格式"""
             line = line.strip()
-            
             if not line or line.startswith(('#', '//', '<!--', 'http')):
                 return None
             
-            # 模式1: IP:Port#Country
+            # IP:Port#Country
             match = re.match(r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)#(.+)$', line)
             if match:
                 ip, port, country = match.groups()
                 if is_valid_ip(ip) and is_valid_port(port):
                     return {'ip': ip, 'port': port, 'country': country.strip()}
             
-            # 模式2: IP#Country
+            # IP#Country
             match = re.match(r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})#(.+)$', line)
             if match:
                 ip, country = match.groups()
                 if is_valid_ip(ip):
                     return {'ip': ip, 'port': '443', 'country': country.strip()}
             
-            # 模式3: IP:Port
+            # IP:Port
             match = re.match(r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d+)', line)
             if match:
                 ip, port = match.groups()
                 if is_valid_ip(ip) and is_valid_port(port):
                     return {'ip': ip, 'port': port, 'country': None}
             
-            # 模式4: 单独IP
+            # 单独IP
             match = re.match(r'^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$', line)
             if match:
                 ip = match.group(1)
@@ -187,166 +172,36 @@ jobs:
                 print(f"❌ 获取 {url} 失败: {e}")
             return ""
 
-        def normalize_location(location: str) -> str:
-            """标准化地理位置格式"""
-            if not location or location == 'Unknown':
-                return 'Unknown'
-            
-            location = location.strip()
-            location = re.sub(r'\s+', ' ', location)
-            
-            if '-' not in location and ' ' in location:
-                parts = location.split(' ', 1)
-                location = '-'.join(parts)
-            
-            return location
-
         async def get_ip_location(session: aiohttp.ClientSession, ip: str, retry: int = 2) -> str:
             """获取IP详细地理位置"""
-            
             for attempt in range(retry):
                 try:
-                    async with session.get(f'http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,regionName,city,countryCode', 
-                                          timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    async with session.get(
+                        f'http://ip-api.com/json/{ip}?lang=zh-CN&fields=status,country,regionName,city,countryCode',
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
                         if response.status == 200:
                             data = await response.json()
                             if data.get('status') == 'success':
                                 country = data.get('country', '')
-                                region_name = data.get('regionName', '')
                                 city = data.get('city', '')
                                 country_code = data.get('countryCode', '')
                                 
                                 if country_code and country_code in COUNTRY_MAPPING:
                                     country = COUNTRY_MAPPING[country_code]
                                 
-                                location_parts = []
-                                if country:
-                                    location_parts.append(country)
-                                
+                                location_parts = [country] if country else []
                                 if city and city.strip():
                                     location_parts.append(city.strip())
-                                elif region_name and region_name.strip():
-                                    location_parts.append(region_name.strip())
                                 
                                 if location_parts:
-                                    location = '-'.join(location_parts)
-                                    return normalize_location(location)
+                                    return '-'.join(location_parts)
                 except Exception as e:
                     if attempt == retry - 1:
-                        print(f"    ⚠️  ip-api.com 查询失败: {e}")
+                        print(f"        ⚠️  地理位置查询失败: {e}")
                     await asyncio.sleep(1)
             
             return 'Unknown'
-
-        def measure_latency_via_dns(ip: str, port: int, dns_server: str, timeout: float = 5.0, test_count: int = 3) -> Optional[float]:
-            """通过指定DNS服务器测量延迟"""
-            latencies = []
-            
-            for _ in range(test_count):
-                try:
-                    resolver = dns.resolver.Resolver()
-                    resolver.nameservers = [dns_server]
-                    resolver.timeout = 2
-                    resolver.lifetime = 2
-                    
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(timeout)
-                    
-                    start_time = time.time()
-                    result = sock.connect_ex((ip, port))
-                    end_time = time.time()
-                    
-                    sock.close()
-                    
-                    if result == 0:
-                        latency_ms = (end_time - start_time) * 1000
-                        latencies.append(latency_ms)
-                    
-                    time.sleep(0.1)
-                    
-                except Exception:
-                    pass
-            
-            if latencies:
-                avg_latency = sum(latencies) / len(latencies)
-                return round(avg_latency, 2)
-            else:
-                return None
-
-        def test_isp_connectivity_with_latency(ip: str, port: int) -> Dict[str, Dict]:
-            """测试IP对三大运营商的连通性和延迟"""
-            results = {}
-            
-            print(f"    测试运营商连通性和延迟:")
-            
-            for isp_name, dns_servers in ISP_DNS.items():
-                best_latency = None
-                
-                for dns_server in dns_servers:
-                    latency = measure_latency_via_dns(ip, port, dns_server, timeout=5.0, test_count=3)
-                    
-                    if latency is not None:
-                        if best_latency is None or latency < best_latency:
-                            best_latency = latency
-                
-                is_connected = best_latency is not None
-                results[isp_name] = {
-                    'connected': is_connected,
-                    'latency': best_latency
-                }
-                
-                status = "✅" if is_connected else "❌"
-                latency_str = f"{best_latency:.0f}ms" if best_latency else "不通"
-                print(f"      {status} {isp_name}: {latency_str}")
-            
-            return results
-
-        async def test_china_via_chinaz(session: aiohttp.ClientSession, ip: str) -> bool:
-            """通过站长工具测试国内连通性"""
-            try:
-                url = f"https://ping.chinaz.com/{ip}"
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-                
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=20)) as response:
-                    if response.status != 200:
-                        return False
-                    
-                    html = await response.text()
-                    
-                    # 简单检查：如果页面包含成功响应的关键词
-                    if 'ms' in html and ('响应' in html or 'ping' in html.lower()):
-                        # 检查是否有超时过多
-                        timeout_count = html.count('超时') + html.count('timeout')
-                        success_indicators = html.count('ms')
-                        
-                        # 如果成功指标多于超时，认为可访问
-                        if success_indicators > timeout_count:
-                            return True
-                    
-                    return False
-                    
-            except Exception as e:
-                print(f"      站长工具测试异常: {e}")
-                return False
-
-        async def test_china_connectivity(session: aiohttp.ClientSession, ip: str, port: int) -> bool:
-            """
-            测试国内连通性
-            使用公共测试站点进行验证
-            """
-            print(f"    🇨🇳 国内公共站点测试...")
-            
-            # 方法1: 站长工具
-            result = await test_china_via_chinaz(session, ip)
-            
-            if result:
-                print(f"      ✅ 国内可访问")
-                return True
-            else:
-                print(f"      ❌ 国内不可访问或测试失败")
-                return False
 
         def test_overseas_connectivity(ip: str, port: int, timeout: float = 5.0) -> Tuple[bool, Optional[float]]:
             """测试国外连通性（GitHub Actions环境）"""
@@ -368,8 +223,151 @@ jobs:
             except Exception:
                 return False, None
 
-        async def test_ip_connectivity(ip_data: Dict, session: aiohttp.ClientSession) -> Optional[Dict]:
-            """测试单个IP的连通性（国内外双向检测）"""
+        class ChinaNetworkTester:
+            """国内三网连通性测试器（使用公共API）"""
+            
+            async def test_via_ipcheck(self, session: aiohttp.ClientSession, ip: str) -> Optional[Dict]:
+                """
+                通过 IPCheck API 测试
+                API: https://ipcheck.need.sh/ 或 https://ipcheck.ing/
+                """
+                try:
+                    # 尝试主API
+                    urls = [
+                        f"https://api.ipcheck.ing/api/ping/{ip}",
+                        f"https://ipcheck.need.sh/api/ping/{ip}"
+                    ]
+                    
+                    for url in urls:
+                        try:
+                            headers = {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                            }
+                            
+                            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=25)) as response:
+                                if response.status == 200:
+                                    data = await response.json()
+                                    
+                                    results = {'电信': False, '联通': False, '移动': False}
+                                    
+                                    if data.get('code') == 200 and data.get('data'):
+                                        for item in data['data']:
+                                            isp = item.get('isp', '')
+                                            avg_latency = item.get('avg', 9999)
+                                            
+                                            # 延迟小于800ms认为可用
+                                            if avg_latency > 0 and avg_latency < 800:
+                                                if '电信' in isp or 'CT' in isp:
+                                                    results['电信'] = True
+                                                elif '联通' in isp or 'CU' in isp:
+                                                    results['联通'] = True
+                                                elif '移动' in isp or 'CM' in isp:
+                                                    results['移动'] = True
+                                    
+                                    # 如果至少有一个运营商可用，返回结果
+                                    if any(results.values()):
+                                        return results
+                        except:
+                            continue
+                    
+                    return None
+                    
+                except Exception as e:
+                    print(f"        IPCheck 测试异常: {e}")
+                    return None
+            
+            async def test_via_chinaz(self, session: aiohttp.ClientSession, ip: str) -> Optional[Dict]:
+                """通过站长工具测试"""
+                try:
+                    url = f"https://ping.chinaz.com/{ip}"
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    }
+                    
+                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                        if response.status != 200:
+                            return None
+                        
+                        html = await response.text()
+                        
+                        # 统计成功的Ping次数
+                        success_count = html.count('ms</span>') - html.count('超时')
+                        
+                        results = {'电信': False, '联通': False, '移动': False}
+                        
+                        # 如果成功响应数量足够，认为可用
+                        if success_count >= 5:
+                            # 尝试识别运营商
+                            if '电信' in html:
+                                results['电信'] = True
+                            if '联通' in html:
+                                results['联通'] = True
+                            if '移动' in html:
+                                results['移动'] = True
+                            
+                            # 如果无法识别具体运营商，但有足够成功数，认为都可用
+                            if not any(results.values()):
+                                results = {'电信': True, '联通': True, '移动': True}
+                        
+                        return results if any(results.values()) else None
+                        
+                except Exception as e:
+                    print(f"        站长工具测试异常: {e}")
+                    return None
+            
+            async def test_china_connectivity(self, session: aiohttp.ClientSession, ip: str) -> Optional[Dict]:
+                """综合测试国内三网连通性"""
+                print(f"      🇨🇳 国内三网测试:")
+                
+                all_results = []
+                
+                # 1. 优先使用 IPCheck（最准确）
+                print(f"        [1/2] IPCheck API...", end=' ')
+                ipcheck_result = await self.test_via_ipcheck(session, ip)
+                if ipcheck_result:
+                    all_results.append(ipcheck_result)
+                    print("✅")
+                else:
+                    print("❌")
+                
+                await asyncio.sleep(1)
+                
+                # 2. 备用站长工具
+                print(f"        [2/2] 站长工具...", end=' ')
+                chinaz_result = await self.test_via_chinaz(session, ip)
+                if chinaz_result:
+                    all_results.append(chinaz_result)
+                    print("✅")
+                else:
+                    print("❌")
+                
+                if not all_results:
+                    print(f"        ⚠️  所有测试源均失败")
+                    return None
+                
+                # 综合判断：多数源认可才算通过
+                final_result = {
+                    '电信': sum(r.get('电信', False) for r in all_results) >= len(all_results) // 2,
+                    '联通': sum(r.get('联通', False) for r in all_results) >= len(all_results) // 2,
+                    '移动': sum(r.get('移动', False) for r in all_results) >= len(all_results) // 2,
+                }
+                
+                # 打印结果
+                for isp, connected in final_result.items():
+                    status = "✅" if connected else "❌"
+                    print(f"        {status} {isp}")
+                
+                # 至少两个运营商可用
+                connected_count = sum(final_result.values())
+                final_result['reliable'] = connected_count >= 2
+                final_result['connected_count'] = connected_count
+                
+                return final_result
+
+        async def test_ip_connectivity(ip_data: Dict, session: aiohttp.ClientSession, 
+                                      tester: ChinaNetworkTester) -> Optional[Dict]:
+            """测试单个IP的连通性"""
             ip = ip_data['ip']
             port = int(ip_data['port'])
             
@@ -378,67 +376,44 @@ jobs:
             print(f"{'='*60}")
             
             # 1. 国外连通性测试
-            print(f"  [1/4] 🌍 国外连通性测试...", end=' ')
-            overseas_connected, overseas_latency = test_overseas_connectivity(ip, port, timeout=5.0)
+            print(f"    [1/3] 🌍 国外连通性...", end=' ')
+            overseas_connected, overseas_latency = test_overseas_connectivity(ip, port)
             
             if not overseas_connected:
-                print("❌ 失败")
+                print("❌ 不通")
                 return None
             
-            print(f"✅ 成功 ({overseas_latency:.0f}ms)")
+            print(f"✅ 通 ({overseas_latency:.0f}ms)")
             
-            # 2. 国内连通性测试（通过公共测试站点）
-            print(f"  [2/4] 国内连通性测试:")
-            china_accessible = await test_china_connectivity(session, ip, port)
+            # 2. 国内三网真实测试
+            print(f"    [2/3] 国内三网真实连通性测试:")
+            china_result = await tester.test_china_connectivity(session, ip)
             
-            if not china_accessible:
-                print(f"      🚫 国内不可访问，疑似被墙，跳过")
+            if not china_result:
+                print(f"        🚫 测试失败，跳过")
                 return None
             
-            # 3. 三网延迟测试
-            print(f"  [3/4] 三网延迟测试:")
-            isp_results = test_isp_connectivity_with_latency(ip, port)
-            
-            # 检查是否全部联通
-            all_connected = all(result['connected'] for result in isp_results.values())
-            
-            if not all_connected:
-                failed_isps = [isp for isp, result in isp_results.items() if not result['connected']]
-                print(f"      ⚠️  部分运营商不通: {', '.join(failed_isps)}")
-                print(f"      ❌ 未通过三网测试，跳过")
+            if not china_result['reliable']:
+                print(f"        🚫 国内连通性不可靠（仅{china_result['connected_count']}/3运营商可用）")
                 return None
             
-            # 计算平均延迟
-            latencies = [result['latency'] for result in isp_results.values() if result['latency'] is not None]
-            avg_latency = round(sum(latencies) / len(latencies), 2) if latencies else 0
+            # 3. 查询地理位置
+            print(f"    [3/3] 地理位置...", end=' ')
+            location = await get_ip_location(session, ip, retry=2)
             
-            print(f"      ✅ 电信、联通、移动全部联通")
-            print(f"      📊 平均延迟: {avg_latency:.0f}ms")
-            
-            # 4. 查询地理位置
-            print(f"  [4/4] 查询地理位置信息...")
-            location = await get_ip_location(session, ip, retry=3)
-            
-            if location == 'Unknown':
-                print(f"      ⚠️  无法获取地理位置，跳过")
+            if location == 'Unknown' or '-' not in location:
+                print(f"❌ 无效")
                 return None
             
-            print(f"      📍 位置: {location}")
-            
-            if not location or location == 'Unknown' or '-' not in location:
-                print(f"      ❌ 格式异常")
-                return None
-            
-            print(f"  🎉 此IP通过所有测试（国内外均可访问）！")
+            print(f"✅ {location}")
+            print(f"    🎉 通过所有测试！")
             
             return {
                 'ip': ip,
                 'port': port,
                 'location': location,
-                'isp_results': isp_results,
-                'avg_latency': avg_latency,
+                'china_result': china_result,
                 'overseas_latency': overseas_latency,
-                'china_accessible': True
             }
 
         def filter_best_ips_by_location(valid_ips: List[Dict], max_per_location: int = MAX_IPS_PER_LOCATION) -> List[Dict]:
@@ -452,12 +427,12 @@ jobs:
             
             filtered_ips = []
             for location, ips in by_location.items():
-                sorted_ips = sorted(ips, key=lambda x: x['avg_latency'])
+                sorted_ips = sorted(ips, key=lambda x: x['overseas_latency'])
                 best_ips = sorted_ips[:max_per_location]
                 filtered_ips.extend(best_ips)
                 
                 if len(ips) > max_per_location:
-                    print(f"  📍 {location}: 保留最优 {max_per_location}/{len(ips)} 个IP (延迟: {best_ips[0]['avg_latency']:.0f}ms - {best_ips[-1]['avg_latency']:.0f}ms)")
+                    print(f"  📍 {location}: 保留 {max_per_location}/{len(ips)} 个IP")
                 else:
                     print(f"  📍 {location}: 保留全部 {len(ips)} 个IP")
             
@@ -465,20 +440,20 @@ jobs:
 
         async def main():
             print("=" * 60)
-            print("🚀 开始测试 IP 连通性（国内外双向检测）")
+            print("🚀 IP 连通性测试 - 改进版（真实国内网络测试）")
             print("=" * 60)
             
             api_urls = load_api_list('api.txt')
             
             if not api_urls:
-                print("❌ 没有可用的 API，请检查 api.txt 文件")
+                print("❌ 没有可用的 API")
                 return
             
             all_ips = []
             seen_ips = set()
             
             async with aiohttp.ClientSession() as session:
-                print(f"\n📥 正在从 {len(api_urls)} 个 API 获取 IP 列表...")
+                print(f"\n📥 从 {len(api_urls)} 个 API 获取 IP...")
                 print("-" * 60)
                 
                 for idx, api_url in enumerate(api_urls, 1):
@@ -488,81 +463,73 @@ jobs:
                     if not content:
                         continue
                     
-                    lines = content.split('\n')
                     count_before = len(all_ips)
-                    
-                    for line in lines:
+                    for line in content.split('\n'):
                         ip_data = parse_ip_line(line)
                         if ip_data and ip_data['ip'] not in seen_ips:
                             seen_ips.add(ip_data['ip'])
                             all_ips.append(ip_data)
                     
                     new_ips = len(all_ips) - count_before
-                    if new_ips > 0:
-                        print(f"  ✅ 新增 {new_ips} 个 IP")
-                    else:
-                        print(f"  ⚠️  未获取到新 IP")
+                    print(f"  {'✅' if new_ips > 0 else '⚠️'} 新增 {new_ips} 个IP")
                 
                 print("-" * 60)
-                print(f"✅ 共收集到 {len(all_ips)} 个唯一 IP")
+                print(f"✅ 共收集 {len(all_ips)} 个唯一IP")
                 
                 if len(all_ips) == 0:
-                    print("❌ 没有收集到任何 IP，请检查 API 是否正常")
                     with open('ip.txt', 'w', encoding='utf-8') as f:
                         f.write(f"# 测试时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                         f.write("# 未收集到任何 IP 数据\n")
                     return
                 
-                print("\n🔄 开始测试连通性（国内外双向检测）...")
+                print("\n🔄 开始连通性测试...")
                 print("=" * 60)
-                print("说明: 只保留国内外均可访问且三网全通的IP")
-                print(f"策略: 每个地区保留延迟最低的最多 {MAX_IPS_PER_LOCATION} 个IP")
+                print("✓ 国外: GitHub Actions节点")
+                print("✓ 国内: IPCheck + 站长工具（真实网络测试）")
+                print("✓ 三网: 中国电信 | 中国联通 | 中国移动")
+                print(f"✓ 优选: 每地区最多保留{MAX_IPS_PER_LOCATION}个")
                 print("=" * 60)
                 
+                tester = ChinaNetworkTester()
                 valid_ips = []
                 
-                batch_size = 5  # 降低并发，因为要调用公共测试站点
-                for i in range(0, len(all_ips), batch_size):
-                    batch = all_ips[i:i+batch_size]
-                    batch_tasks = [test_ip_connectivity(ip_data, session) for ip_data in batch]
+                for i in range(0, len(all_ips), BATCH_SIZE):
+                    batch = all_ips[i:i+BATCH_SIZE]
+                    batch_tasks = [test_ip_connectivity(ip_data, session, tester) for ip_data in batch]
                     results = await asyncio.gather(*batch_tasks)
                     valid_ips.extend([r for r in results if r is not None])
                     
-                    progress = min(i + batch_size, len(all_ips))
+                    progress = min(i + BATCH_SIZE, len(all_ips))
                     print(f"\n{'='*60}")
-                    print(f"📊 进度: {progress}/{len(all_ips)} ({progress*100//len(all_ips)}%) | 国内外均可访问: {len(valid_ips)}")
+                    print(f"📊 进度: {progress}/{len(all_ips)} ({progress*100//len(all_ips)}%) | 通过: {len(valid_ips)}")
                     print(f"{'='*60}")
                     
-                    await asyncio.sleep(2)  # 延迟，避免公共站点限流
+                    await asyncio.sleep(TEST_DELAY)
             
             print("\n" + "=" * 60)
-            print(f"✅ 测试完成！")
-            print(f"📊 总测试数: {len(all_ips)}")
-            print(f"✅ 国内外均可访问: {len(valid_ips)}")
-            print(f"📈 通过率: {len(valid_ips)*100//len(all_ips) if all_ips else 0}%")
+            print(f"✅ 测试完成")
+            print(f"📊 总数: {len(all_ips)} | 通过: {len(valid_ips)} | 通过率: {len(valid_ips)*100//len(all_ips) if all_ips else 0}%")
             print("=" * 60)
             
             if valid_ips:
-                print(f"\n🎯 开始按地区优选IP (每个地区最多保留{MAX_IPS_PER_LOCATION}个)...")
+                print(f"\n🎯 按地区优选IP...")
                 print("-" * 60)
                 filtered_ips = filter_best_ips_by_location(valid_ips, MAX_IPS_PER_LOCATION)
                 print("-" * 60)
-                print(f"✅ 优选完成: {len(filtered_ips)}/{len(valid_ips)} 个IP")
+                print(f"✅ 最终: {len(filtered_ips)} 个IP")
             else:
                 filtered_ips = []
             
             # 写入文件
             with open('ip.txt', 'w', encoding='utf-8') as f:
-                f.write(f"# IP 国内外双向连通性测试结果\n")
+                f.write(f"# IP 连通性测试结果（改进版 - 真实国内网络测试）\n")
                 f.write(f"# 测试时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"# 总测试数: {len(all_ips)}\n")
-                f.write(f"# 国内外均可访问: {len(valid_ips)}\n")
-                f.write(f"# 优选保留: {len(filtered_ips)}\n")
+                f.write(f"# 总测试: {len(all_ips)} | 通过: {len(valid_ips)} | 优选: {len(filtered_ips)}\n")
                 f.write(f"# 通过率: {len(valid_ips)*100//len(all_ips) if all_ips else 0}%\n")
-                f.write(f"# 国外: GitHub Actions节点 ✓\n")
-                f.write(f"# 国内: 公共测试站点验证 ✓\n")
-                f.write(f"# 运营商: 中国电信 ✓ | 中国联通 ✓ | 中国移动 ✓\n")
-                f.write(f"# 优选策略: 每个地区保留延迟最低的最多 {MAX_IPS_PER_LOCATION} 个IP\n")
+                f.write(f"# 国外测试: GitHub Actions ✓\n")
+                f.write(f"# 国内测试: IPCheck API ✓ | 站长工具 ✓\n")
+                f.write(f"# 三网要求: 至少2/3运营商可用\n")
+                f.write(f"# 优选策略: 每地区最多{MAX_IPS_PER_LOCATION}个（按延迟排序）\n")
                 f.write(f"# 格式: IP:端口#国家-地区\n")
                 f.write("#" + "=" * 58 + "\n\n")
                 
@@ -574,16 +541,13 @@ jobs:
                             by_location[location] = []
                         by_location[location].append(ip_info)
                     
-                    sorted_locations = sorted(by_location.keys(), key=lambda x: (
-                        x.split('-')[0],
-                        x.split('-')[1] if '-' in x and len(x.split('-')) > 1 else ''
-                    ))
+                    sorted_locations = sorted(by_location.keys())
                     
                     for location in sorted_locations:
                         ips = by_location[location]
                         f.write(f"# {location} ({len(ips)}个)\n")
                         
-                        sorted_ips = sorted(ips, key=lambda x: x['avg_latency'])
+                        sorted_ips = sorted(ips, key=lambda x: x['overseas_latency'])
                         
                         for ip_info in sorted_ips:
                             line = f"{ip_info['ip']}:{ip_info['port']}#{ip_info['location']}"
@@ -592,38 +556,28 @@ jobs:
                     
                     print(f"\n💾 结果已保存到 ip.txt")
                     
-                    # 统计信息
-                    print("\n📊 地理位置分布统计:")
+                    # 统计
+                    print("\n📊 统计信息:")
                     country_stats = {}
                     for location, ips in by_location.items():
                         country = location.split('-')[0]
                         if country not in country_stats:
-                            country_stats[country] = {'count': 0, 'latencies': []}
-                        country_stats[country]['count'] += len(ips)
-                        for ip in ips:
-                            country_stats[country]['latencies'].append(ip['avg_latency'])
+                            country_stats[country] = 0
+                        country_stats[country] += len(ips)
                     
-                    for country, stats in sorted(country_stats.items(), key=lambda x: x[1]['count'], reverse=True):
-                        avg_latency = sum(stats['latencies']) / len(stats['latencies'])
-                        print(f"  🌍 {country}: {stats['count']} 个 (平均延迟: {avg_latency:.0f}ms)")
-                    
-                    all_latencies = [ip['avg_latency'] for ip in filtered_ips]
-                    print("\n⏱️  延迟统计:")
-                    print(f"  🏆 最低延迟: {min(all_latencies):.0f}ms")
-                    print(f"  📊 平均延迟: {sum(all_latencies)/len(all_latencies):.0f}ms")
-                    print(f"  📈 最高延迟: {max(all_latencies):.0f}ms")
-                    
+                    for country, count in sorted(country_stats.items(), key=lambda x: x[1], reverse=True):
+                        print(f"  🌍 {country}: {count} 个")
                 else:
-                    f.write("# 未找到国内外均可访问的 IP\n")
-                    print("\n⚠️  没有找到国内外均可访问的 IP")
+                    f.write("# 未找到符合条件的 IP\n")
+                    print("\n⚠️ 没有找到符合条件的IP")
 
         if __name__ == '__main__':
             asyncio.run(main())
         EOF
 
-    - name: Run IP connectivity test
+    - name: Run IP connectivity test (Improved)
       run: |
-        python test_ip.py
+        python test_ip_improved.py
 
     - name: Check if ip.txt exists and has valid data
       id: check_file
@@ -633,20 +587,20 @@ jobs:
           
           if [ "$valid_lines" -gt 0 ]; then
             echo "file_exists=true" >> $GITHUB_OUTPUT
-            echo "✅ ip.txt 文件已生成，包含 $valid_lines 个有效 IP"
+            echo "✅ ip.txt 已生成，包含 $valid_lines 个有效IP"
             echo "ip_count=$valid_lines" >> $GITHUB_OUTPUT
           else
             echo "file_exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️  ip.txt 文件已生成，但没有有效的 IP 数据"
+            echo "⚠️ ip.txt 已生成，但无有效IP"
             echo "ip_count=0" >> $GITHUB_OUTPUT
           fi
           
-          echo "📄 文件内容预览:"
+          echo "📄 文件预览:"
           head -n 30 ip.txt
         else
           echo "file_exists=false" >> $GITHUB_OUTPUT
           echo "ip_count=0" >> $GITHUB_OUTPUT
-          echo "❌ ip.txt 文件未生成"
+          echo "❌ ip.txt 未生成"
         fi
 
     - name: Create Release
@@ -654,49 +608,61 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ github.run_number }}-${{ github.run_id }}
-        name: IP List ${{ github.run_number }} - ${{ steps.check_file.outputs.ip_count }} IPs (国内外均可访问)
+        name: IP List v${{ github.run_number }} - ${{ steps.check_file.outputs.ip_count }} IPs (真实国内三网测试)
         body: |
-          ## 📋 IP 国内外双向连通性测试结果
+          ## 📋 IP 连通性测试结果（改进版）
           
           **测试时间:** `${{ github.event.repository.updated_at }}`  
           **运行编号:** #${{ github.run_number }}  
           **优选 IP:** ${{ steps.check_file.outputs.ip_count }} 个
           
-          ### 📊 测试说明
-          - ✅ 所有 IP 均通过国内外双向连通性测试
-          - 🌍 **国外节点**: GitHub Actions ✓
-          - 🇨🇳 **国内验证**: 公共测试站点 ✓
-          - 🌐 **三网测试**: 中国电信 ✓ | 中国联通 ✓ | 中国移动 ✓
-          - ⏱️ 基于延迟测试进行智能优选
-          - 📍 包含详细地理位置信息（国家-城市/地区）
-          - 🎯 **智能优选**: 每个地区保留延迟最低的最多5个IP
-          - 📝 格式: `IP:端口#国家-地区`
-          - 🔄 每天北京时间凌晨 3 点自动更新
+          ### 🎯 测试方法（真实国内网络测试）
           
-          ### 🎯 质量保证
-          - **国外可访问**: 通过GitHub Actions节点验证
-          - **国内可访问**: 通过公共测试站点验证（站长工具等）
-          - **三网全通**: 电信、联通、移动均可连接
-          - **延迟优选**: 按地区保留最优IP
-          - **自动过滤**: 排除被GFW封锁的IP
+          #### ✅ 国外测试
+          - 通过 GitHub Actions 节点直接连接测试
           
-          ### 🚫 GFW检测
-          本测试采用国内外双向检测机制：
-          - 如果IP在国外可访问但国内不通 → 自动排除（疑似被墙）
-          - 只保留国内外均可访问的IP
+          #### ✅ 国内测试（真实网络环境）
+          - **IPCheck API**: 专业IP连通性测试服务，提供三网分测数据
+          - **站长工具**: 多地区多运营商节点验证
+          - **双源交叉验证**: 只有多数测试源都通过才认定为可用
+          
+          #### 🌐 三网要求
+          - 中国电信 ✓
+          - 中国联通 ✓  
+          - 中国移动 ✓
+          - **至少 2/3 运营商可用才通过**
+          
+          #### 🎯 智能优选策略
+          - 按地理位置分组
+          - 每个地区保留延迟最低的最多 5 个 IP
+          - 自动过滤被墙 IP
+          - 包含详细地理位置信息
+          
+          ### 📝 文件格式
+          ```
+          IP:端口#国家-地区
+          ```
+          
+          ### 🚫 GFW 检测机制
+          - 国外可访问 + 国内不通 → 自动排除
+          - 只保留国内外均可访问的 IP
           - 确保全球用户都能正常使用
           
           ### 📥 使用方法
           1. 下载 `ip.txt` 文件
-          2. 按照格式使用其中的 IP 地址
-          3. 每个 IP 都已验证国内外均可连接
-          4. IP已按延迟排序，优先使用列表前面的IP
+          2. 每个 IP 都已通过真实国内网络验证
+          3. IP 按延迟排序，优先使用前面的
+          4. 每天自动更新（北京时间凌晨 3 点）
           
-          ### ⚙️ API 来源
-          IP 数据来自 `api.txt` 文件中配置的 API 接口
+          ### ⚙️ 数据来源
+          IP 来源于 `api.txt` 中配置的 CloudFlare IP 优选 API
+          
+          ### 🔄 更新频率
+          - 自动: 每天北京时间凌晨 3 点
+          - 手动: 可随时在 Actions 页面手动触发
           
           ---
-          *此 Release 由 GitHub Actions 自动生成 🤖*
+          *此 Release 由 GitHub Actions 自动生成 | 使用真实国内网络测试 🤖*
         files: |
           ip.txt
         draft: false
@@ -724,7 +690,7 @@ jobs:
           
           if (sortedReleases.length > 5) {
             for (let i = 5; i < sortedReleases.length; i++) {
-              console.log(`Deleting release: ${sortedReleases[i].name} (${sortedReleases[i].tag_name})`);
+              console.log(`Deleting: ${sortedReleases[i].name}`);
               await github.rest.repos.deleteRelease({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -737,12 +703,11 @@ jobs:
                   repo: context.repo.repo,
                   ref: `tags/${sortedReleases[i].tag_name}`
                 });
-                console.log(`Deleted tag: ${sortedReleases[i].tag_name}`);
               } catch (error) {
-                console.log(`Could not delete tag: ${sortedReleases[i].tag_name}`);
+                console.log(`Tag deletion failed: ${sortedReleases[i].tag_name}`);
               }
             }
-            console.log(`✅ Cleaned up ${sortedReleases.length - 5} old releases`);
+            console.log(`✅ Cleaned ${sortedReleases.length - 5} old releases`);
           } else {
             console.log('✅ No cleanup needed');
           }
